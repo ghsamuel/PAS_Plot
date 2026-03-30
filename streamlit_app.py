@@ -1,15 +1,62 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 from io import StringIO, BytesIO
 import numpy as np
-from adjustText import adjust_text
 
 st.set_page_config(page_title="PAS Bubble Plot Generator", layout="wide")
 
 st.title("🧬 PAS Bubble Plot Generator")
 st.markdown("Create bubble plots showing transcript 3' ends relative to polyadenylation sites")
+
+# ============================================================================
+# INSTRUCTIONS AT TOP
+# ============================================================================
+
+with st.expander("📖 **How to Use This Tool**", expanded=False):
+    st.markdown("""
+    ### Quick Start
+    1. Choose input method in sidebar (Paste Data / Upload Files / Example)
+    2. Provide 3 datasets (see format below)
+    3. Adjust settings in sidebar (optional)
+    4. Click **Generate Plot**
+    5. Download as PNG or PDF
+    
+    ### Required Data Format
+    
+    **1. PAS Sites** - Polyadenylation site coordinates
+    ```
+    pas,coord
+    long,40624962
+    medium,40627710
+    short,40628724
+    ```
+    
+    **2. Transcript Info** - Transcript 3' end positions  
+    ```
+    tx_id,start
+    TX1,40628980
+    TX2,40627710
+    TX3,40624962
+    ```
+    *(Use `start` for minus-strand genes, `end` for plus-strand genes)*
+    
+    **3. Expression Data** - TPM values (add columns for more conditions)
+    ```
+    tx_id,WT,KD
+    TX1,52.98,55.12
+    TX2,24.56,17.89
+    TX3,29.34,11.28
+    ```
+    
+    ### Features
+    - ✅ **Auto PAS Assignment**: Transcripts assigned to nearest PAS within window
+    - ✅ **Multiple Conditions**: Handles 2, 3, 4+ conditions automatically
+    - ✅ **Flexible PAS Sites**: Works with any number of PAS sites
+    - ✅ **Publication Ready**: Download high-resolution PNG/PDF
+    
+    💡 **Tip**: Try "Use Example Data" to see the format!
+    """)
 
 # Sidebar for input method
 st.sidebar.header("Input Method")
@@ -154,12 +201,10 @@ if show_labels and condition_order:
 else:
     label_condition = condition_order[0] if condition_order else 'WT'
 
-zoom_start = st.sidebar.number_input("Zoom Start (optional)", value=0, step=1000)
-zoom_end = st.sidebar.number_input("Zoom End (optional)", value=0, step=1000)
-
 plot_title = st.sidebar.text_input("Plot Title", "Transcript 3' ends relative to PAS sites")
+plot_subtitle = st.sidebar.text_input("Plot Subtitle", f"Bubble size = TPM | Shaded = {pas_window}nt window")
 
-# Color palette
+# Color palette - matching R version exactly
 color_map = {
     'long': '#2A9D8F',
     'medium': '#E76F51',
@@ -214,19 +259,16 @@ if st.button("🎨 Generate Plot", type="primary"):
                 {cond: i for i, cond in enumerate(condition_order)}
             )
             
-            # Apply zoom
-            if zoom_start > 0 and zoom_end > zoom_start:
-                plot_data_long = plot_data_long[
-                    (plot_data_long['start'] >= zoom_start) & 
-                    (plot_data_long['start'] <= zoom_end)
-                ]
-            
             # Create matplotlib figure
-            fig, ax = plt.subplots(figsize=(12, 6))
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = ['Arial', 'Helvetica']
+            plt.rcParams['pdf.fonttype'] = 42
+            plt.rcParams['ps.fonttype'] = 42
             
-            # Add PAS shaded regions and vertical lines
+            fig, ax = plt.subplots(figsize=(12, 5), dpi=100)
+            
+            # PAS shaded regions
             for _, pas_row in pas_df.iterrows():
-                # Shaded region
                 ax.axvspan(
                     pas_row['coord'] - pas_window,
                     pas_row['coord'] + pas_window,
@@ -234,32 +276,21 @@ if st.button("🎨 Generate Plot", type="primary"):
                     color=color_map.get(pas_row['pas'], 'grey'),
                     zorder=0
                 )
-                # Vertical line
+            
+            # PAS vertical lines
+            for _, pas_row in pas_df.iterrows():
                 ax.axvline(
                     pas_row['coord'],
                     color=color_map.get(pas_row['pas'], 'grey'),
                     linestyle='--',
-                    linewidth=2,
+                    linewidth=1.5,
                     alpha=0.8,
                     zorder=1
                 )
-                # PAS label at top
-                ax.text(
-                    pas_row['coord'],
-                    len(condition_order) - 0.4,
-                    pas_row['pas'],
-                    ha='center',
-                    va='bottom',
-                    fontsize=11,
-                    fontweight='bold',
-                    color=color_map.get(pas_row['pas'], 'grey')
-                )
             
-            # Plot bubbles by PAS class
+            # Bubbles
             for pas_class in plot_data_long['nearest_pas'].unique():
                 subset = plot_data_long[plot_data_long['nearest_pas'] == pas_class]
-                
-                # Scale bubble sizes
                 sizes = subset['TPM'] * 10
                 
                 ax.scatter(
@@ -274,121 +305,100 @@ if st.button("🎨 Generate Plot", type="primary"):
                     zorder=3
                 )
             
-            # Add labels if requested
+            # PAS labels
+            for _, pas_row in pas_df.iterrows():
+                ax.text(
+                    pas_row['coord'],
+                    len(condition_order) - 0.35,
+                    pas_row['pas'],
+                    ha='center',
+                    va='bottom',
+                    fontsize=11,
+                    fontweight='bold',
+                    color=color_map.get(pas_row['pas'], 'grey')
+                )
+            
+            # Transcript labels
             if show_labels:
                 label_data = plot_data_long[plot_data_long['condition'] == label_condition]
-                texts = []
                 for _, row in label_data.iterrows():
-                    texts.append(
-                        ax.text(
-                            row['start'],
-                            row['y_pos'],
-                            row['tx_id'],
-                            fontsize=8,
-                            ha='center',
-                            color=color_map.get(row['nearest_pas'], 'grey')
-                        )
-                    )
-                # Adjust text to avoid overlaps
-                if texts:
-                    adjust_text(
-                        texts,
-                        arrowprops=dict(arrowstyle='->', color='grey', lw=0.5, alpha=0.6),
-                        ax=ax
+                    ax.text(
+                        row['start'],
+                        row['y_pos'] + 0.08,
+                        row['tx_id'],
+                        fontsize=7,
+                        ha='center',
+                        va='bottom',
+                        color=color_map.get(row['nearest_pas'], 'grey')
                     )
             
-            # Format axes
-            ax.set_xlabel('Genomic coordinate', fontsize=12)
+            # Formatting
+            ax.set_xlabel('chr17 coordinate (hg38)', fontsize=11)
             ax.set_ylabel('')
             ax.set_yticks(range(len(condition_order)))
-            ax.set_yticklabels(condition_order)
+            ax.set_yticklabels(condition_order, fontsize=11)
             ax.set_ylim(-0.5, len(condition_order) - 0.5 + 0.7)
             
-            # Apply zoom if specified
-            if zoom_start > 0 and zoom_end > zoom_start:
-                ax.set_xlim(zoom_start, zoom_end)
-            
-            # Format x-axis with commas
             ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
+            ax.tick_params(axis='x', labelsize=10)
             
-            # Add title
-            ax.set_title(plot_title, fontsize=14, pad=20)
+            # Title and subtitle
+            fig.suptitle(plot_title, fontsize=13, fontweight='600', y=0.98)
+            ax.text(0.5, 1.08, plot_subtitle, 
+                   ha='center', va='top', fontsize=10,
+                   transform=ax.transAxes, color='#555555')
             
-            # Add legend
-            ax.legend(title='PAS class', loc='upper right', frameon=True, fontsize=10)
+            # Legend
+            legend = ax.legend(
+                title='PAS assignment',
+                loc='center left',
+                bbox_to_anchor=(1.02, 0.5),
+                frameon=True,
+                fontsize=10,
+                title_fontsize=10,
+                edgecolor='#CCCCCC'
+            )
             
-            # Clean up appearance
+            # Clean spines
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+            ax.spines['left'].set_linewidth(0.8)
+            ax.spines['bottom'].set_linewidth(0.8)
+            
+            ax.grid(axis='x', alpha=0.2, linestyle='-', linewidth=0.5)
             ax.set_axisbelow(True)
             
             plt.tight_layout()
             
-            # Display plot
+            # Display
             st.pyplot(fig)
             
             # Download buttons
             col1, col2 = st.columns(2)
             
             with col1:
-                # Save as PNG
                 buf_png = BytesIO()
-                fig.savefig(buf_png, format='png', dpi=300, bbox_inches='tight')
+                fig.savefig(buf_png, format='png', dpi=600, bbox_inches='tight')
                 buf_png.seek(0)
                 st.download_button(
-                    label="📥 Download PNG",
+                    label="📥 Download PNG (600 DPI)",
                     data=buf_png,
                     file_name="pas_bubble_plot.png",
                     mime="image/png"
                 )
             
             with col2:
-                # Save as PDF
                 buf_pdf = BytesIO()
                 fig.savefig(buf_pdf, format='pdf', bbox_inches='tight')
                 buf_pdf.seek(0)
                 st.download_button(
-                    label="📥 Download PDF",
+                    label="📥 Download PDF (Vector)",
                     data=buf_pdf,
                     file_name="pas_bubble_plot.pdf",
                     mime="application/pdf"
                 )
     else:
-        st.error("❌ Please provide all three datasets (PAS sites, Transcript info, Expression data)")
-
-# ============================================================================
-# INSTRUCTIONS
-# ============================================================================
-
-with st.expander("ℹ️ Instructions", expanded=False):
-    st.markdown("""
-    ### How to Use
-    
-    **Required Data:**
-    1. **PAS Sites** - Polyadenylation site coordinates
-       - Columns: `pas` (name), `coord` (coordinate)
-       
-    2. **Transcript Info** - Transcript 3' end positions
-       - Columns: `tx_id` (identifier), `start` (3' end coordinate)
-       
-    3. **Expression Data** - TPM values per condition
-       - Columns: `tx_id`, then one column per condition (e.g., `WT`, `KD`)
-    
-    **Input Methods:**
-    - **Paste Data**: Copy-paste CSV formatted data directly
-    - **Upload Files**: Upload 3 separate CSV files
-    - **Example Data**: Load SMARCE1 example to see format
-    
-    **PAS Assignment:**
-    - Transcripts are automatically assigned to nearest PAS within the window size
-    - Adjust "PAS Window" to change assignment threshold
-    
-    **Plot Controls:**
-    - Reorder conditions to change vertical stacking
-    - Toggle labels on/off
-    - Zoom to specific region by setting start/end coordinates
-    """)
+        st.error("❌ Please provide all three datasets")
 
 # Footer
 st.markdown("---")
