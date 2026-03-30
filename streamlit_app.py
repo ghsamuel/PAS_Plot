@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from io import StringIO
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from io import StringIO, BytesIO
 import numpy as np
+from adjustText import adjust_text
 
 st.set_page_config(page_title="PAS Bubble Plot Generator", layout="wide")
 
@@ -219,109 +221,138 @@ if st.button("🎨 Generate Plot", type="primary"):
                     (plot_data_long['start'] <= zoom_end)
                 ]
             
-            # Create Plotly figure
-            fig = go.Figure()
+            # Create matplotlib figure
+            fig, ax = plt.subplots(figsize=(12, 6))
             
-            # Add PAS shaded regions
+            # Add PAS shaded regions and vertical lines
             for _, pas_row in pas_df.iterrows():
-                fig.add_vrect(
-                    x0=pas_row['coord'] - pas_window,
-                    x1=pas_row['coord'] + pas_window,
-                    fillcolor=color_map.get(pas_row['pas'], 'grey'),
-                    opacity=0.1,
-                    line_width=0
+                # Shaded region
+                ax.axvspan(
+                    pas_row['coord'] - pas_window,
+                    pas_row['coord'] + pas_window,
+                    alpha=0.08,
+                    color=color_map.get(pas_row['pas'], 'grey'),
+                    zorder=0
+                )
+                # Vertical line
+                ax.axvline(
+                    pas_row['coord'],
+                    color=color_map.get(pas_row['pas'], 'grey'),
+                    linestyle='--',
+                    linewidth=2,
+                    alpha=0.8,
+                    zorder=1
+                )
+                # PAS label at top
+                ax.text(
+                    pas_row['coord'],
+                    len(condition_order) - 0.4,
+                    pas_row['pas'],
+                    ha='center',
+                    va='bottom',
+                    fontsize=11,
+                    fontweight='bold',
+                    color=color_map.get(pas_row['pas'], 'grey')
                 )
             
-            # Add PAS vertical lines
-            for _, pas_row in pas_df.iterrows():
-                fig.add_vline(
-                    x=pas_row['coord'],
-                    line_dash="dash",
-                    line_color=color_map.get(pas_row['pas'], 'grey'),
-                    line_width=2
-                )
-                
-                # Add PAS labels
-                fig.add_annotation(
-                    x=pas_row['coord'],
-                    y=len(condition_order) - 0.4,
-                    text=pas_row['pas'],
-                    showarrow=False,
-                    font=dict(size=12, color=color_map.get(pas_row['pas'], 'grey'), family="Arial Black")
-                )
-            
-            # Add bubbles by PAS class
+            # Plot bubbles by PAS class
             for pas_class in plot_data_long['nearest_pas'].unique():
                 subset = plot_data_long[plot_data_long['nearest_pas'] == pas_class]
                 
-                fig.add_trace(go.Scatter(
-                    x=subset['start'],
-                    y=subset['y_pos'],
-                    mode='markers',
-                    marker=dict(
-                        size=subset['TPM'],
-                        sizemode='diameter',
-                        sizeref=subset['TPM'].max() / 100,
-                        color=color_map.get(pas_class, 'grey'),
-                        opacity=0.8,
-                        line=dict(width=1, color='white')
-                    ),
-                    text=subset['tx_id'],
-                    hovertemplate='<b>%{text}</b><br>Coord: %{x}<br>TPM: %{marker.size:.1f}<extra></extra>',
-                    name=pas_class,
-                    showlegend=True
-                ))
+                # Scale bubble sizes
+                sizes = subset['TPM'] * 10
+                
+                ax.scatter(
+                    subset['start'],
+                    subset['y_pos'],
+                    s=sizes,
+                    c=color_map.get(pas_class, 'grey'),
+                    alpha=0.85,
+                    edgecolors='white',
+                    linewidth=1,
+                    label=pas_class,
+                    zorder=3
+                )
             
             # Add labels if requested
             if show_labels:
                 label_data = plot_data_long[plot_data_long['condition'] == label_condition]
+                texts = []
                 for _, row in label_data.iterrows():
-                    fig.add_annotation(
-                        x=row['start'],
-                        y=row['y_pos'],
-                        text=row['tx_id'],
-                        showarrow=True,
-                        arrowhead=2,
-                        arrowsize=1,
-                        arrowwidth=1,
-                        arrowcolor='grey',
-                        ax=20,
-                        ay=-30,
-                        font=dict(size=9)
+                    texts.append(
+                        ax.text(
+                            row['start'],
+                            row['y_pos'],
+                            row['tx_id'],
+                            fontsize=8,
+                            ha='center',
+                            color=color_map.get(row['nearest_pas'], 'grey')
+                        )
+                    )
+                # Adjust text to avoid overlaps
+                if texts:
+                    adjust_text(
+                        texts,
+                        arrowprops=dict(arrowstyle='->', color='grey', lw=0.5, alpha=0.6),
+                        ax=ax
                     )
             
-            # Update layout
-            fig.update_layout(
-                title=dict(text=plot_title, font=dict(size=16)),
-                xaxis=dict(
-                    title="Genomic coordinate",
-                    showgrid=True,
-                    gridcolor='lightgrey'
-                ),
-                yaxis=dict(
-                    title="",
-                    tickmode='array',
-                    tickvals=list(range(len(condition_order))),
-                    ticktext=condition_order,
-                    showgrid=False
-                ),
-                plot_bgcolor='white',
-                hovermode='closest',
-                height=500,
-                legend=dict(title="PAS class")
-            )
+            # Format axes
+            ax.set_xlabel('Genomic coordinate', fontsize=12)
+            ax.set_ylabel('')
+            ax.set_yticks(range(len(condition_order)))
+            ax.set_yticklabels(condition_order)
+            ax.set_ylim(-0.5, len(condition_order) - 0.5 + 0.7)
+            
+            # Apply zoom if specified
+            if zoom_start > 0 and zoom_end > zoom_start:
+                ax.set_xlim(zoom_start, zoom_end)
+            
+            # Format x-axis with commas
+            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
+            
+            # Add title
+            ax.set_title(plot_title, fontsize=14, pad=20)
+            
+            # Add legend
+            ax.legend(title='PAS class', loc='upper right', frameon=True, fontsize=10)
+            
+            # Clean up appearance
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
             
             # Display plot
-            st.plotly_chart(fig, use_container_width=True)
+            st.pyplot(fig)
             
-            # Download button
-            fig.write_html("pas_bubble_plot.html")
-            with open("pas_bubble_plot.html", "rb") as f:
+            # Download buttons
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Save as PNG
+                buf_png = BytesIO()
+                fig.savefig(buf_png, format='png', dpi=300, bbox_inches='tight')
+                buf_png.seek(0)
                 st.download_button(
-                    label="📥 Download Interactive Plot (HTML)",
-                    data=f,
-                    file_name="pas_bubble_plot.html",
-                    mime="text/html"
+                    label="📥 Download PNG",
+                    data=buf_png,
+                    file_name="pas_bubble_plot.png",
+                    mime="image/png"
+                )
+            
+            with col2:
+                # Save as PDF
+                buf_pdf = BytesIO()
+                fig.savefig(buf_pdf, format='pdf', bbox_inches='tight')
+                buf_pdf.seek(0)
+                st.download_button(
+                    label="📥 Download PDF",
+                    data=buf_pdf,
+                    file_name="pas_bubble_plot.pdf",
+                    mime="application/pdf"
                 )
     else:
         st.error("❌ Please provide all three datasets (PAS sites, Transcript info, Expression data)")
